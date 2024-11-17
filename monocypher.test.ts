@@ -10,7 +10,11 @@ const vectors: Record<string, string[]> = (() => {
       new TextDecoder().decode(gunzip(Deno.readFileSync('./test-vectors.json.gz'))),
     );
   } catch (e) {
-    if (e instanceof Deno.errors.NotFound || e?.code === 'ENOENT') {
+    if (
+      e instanceof Deno.errors.NotFound ||
+      (e instanceof Object && Object.hasOwn(e, 'code') &&
+        (e as unknown as { code: string }).code === 'ENOENT')
+    ) {
       return JSON.parse(
         new TextDecoder().decode(gunzip(Deno.readFileSync('../../test-vectors.json.gz'))),
       );

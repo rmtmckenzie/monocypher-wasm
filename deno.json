@@ -3,22 +3,14 @@
     "strict": true
   },
   "lint": {
-    "files": {
-      "exclude": ["build/", "buildNpmTest/", "monocypher.min.js"]
-    }
+    "exclude": ["build/", "buildNpmTest/", "monocypher.min.js"]
   },
   "fmt": {
-    "files": {
-      "exclude": ["build/", "buildNpmTest/", "monocypher.min.js"]
-    },
-    "options": {
-      "lineWidth": 100,
-      "singleQuote": true
-    }
+    "exclude": ["build/", "buildNpmTest/", "monocypher.min.js"],
+    "lineWidth": 100,
+    "singleQuote": true
   },
   "test": {
-    "files": {
-      "exclude": ["build/", "buildNpmTest/"]
-    }
+    "exclude": ["build/", "buildNpmTest/"]
   }
 }

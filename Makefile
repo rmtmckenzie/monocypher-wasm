@@ -1,5 +1,6 @@
 MONOCYPHER_VERSION = 3.1.3
 PACKAGE_VERSION = 0
+MONOCYPHER_VERSION_NAME = monocypher-${MONOCYPHER_VERSION}
 
 COMPILE_FLAGS = -Wall \
 	--target=wasm32 \
@@ -20,7 +21,7 @@ all: npm monocypher.min.js
 npm: test
 	deno run -A scripts/build_npm.ts $(MONOCYPHER_VERSION)-$(PACKAGE_VERSION)
 
-test: monocypher_wasm.ts test-vectors.json.gz check
+test: check monocypher_wasm.ts test-vectors.json.gz
 	deno test --allow-read=test-vectors.json.gz
 
 check:
@@ -31,13 +32,15 @@ clean:
 	rm -rf build buildNpmTest walloc.o monocypher.o
 
 monocypher.min.js: mod.ts monocypher_wasm.ts Makefile
-	deno bundle mod.ts | esbuild --minify > monocypher.min.js
+	deno run --allow-read --allow-write --allow-env --allow-net --allow-run scripts/bundle_mod.ts
+	# > monocypher.min.js
+	# deno bundle mod.ts | deno npm:esbuild --allow-end --minify > monocypher.min.js
 
 monocypher_wasm.ts: monocypher.wasm scripts/wasm_to_ts.ts Makefile
 	deno run scripts/wasm_to_ts.ts < monocypher.wasm > monocypher_wasm.ts
 
 monocypher.wasm: monocypher.o walloc.o Makefile
-	wasm-ld -o monocypher.wasm --no-entry --strip-all -error-limit=0 --lto-O3 -O3 --gc-sections \
+	wasm-ld -o monocypher.wasm --no-entry --strip-all -error-limit=0 --no-entry --lto-O3 -O3 --gc-sections \
 		--export malloc \
 		--export free \
 		--export crypto_argon2i \
@@ -82,8 +85,8 @@ monocypher.o: monocypher.c monocypher.h Makefile
 test-vectors.json.gz: vectors.h scripts/build-test-vectors.ts Makefile
 	deno run scripts/build-test-vectors.ts < vectors.h > test-vectors.json.gz
 
-monocypher.c monocypher.h vectors.h &: Makefile
-	curl https://monocypher.org/download/monocypher-$(MONOCYPHER_VERSION).tar.gz | tar -xzv --no-anchored --overwrite --strip-components=2 src/monocypher.c src/monocypher.h tests/vectors.h
-	touch monocypher.c
-	touch monocypher.h
-	touch vectors.h
+# monocypher.c monocypher.h vectors.h &: Makefile
+# 	curl https://monocypher.org/download/$(MONOCYPHER_VERSION_NAME).tar.gz | tar -xzv --strip-components=2 $(MONOCYPHER_VERSION_NAME)/src/monocypher.c $(MONOCYPHER_VERSION_NAME)/src/monocypher.h $(MONOCYPHER_VERSION_NAME)/tests/vectors.h
+# 	touch monocypher.c
+# 	touch monocypher.h
+# 	touch vectors.h

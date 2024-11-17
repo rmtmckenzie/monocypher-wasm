@@ -2,3 +2,7 @@ build/
 buildNpmTest/
 vectors.h
 *.o
+
+# pixi environments
+.pixi
+*.egg-info
