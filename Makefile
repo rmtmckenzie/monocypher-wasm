@@ -82,8 +82,8 @@ walloc.o: walloc.c Makefile
 monocypher.o: monocypher.c monocypher.h Makefile
 	clang -c $(COMPILE_FLAGS) -o monocypher.o monocypher.c
 
-test-vectors.json.gz: vectors.h scripts/build-test-vectors.ts Makefile
-	deno run scripts/build-test-vectors.ts < vectors.h > test-vectors.json.gz
+test-vectors.json.gz: vectors.h scripts/build_test_vectors.ts Makefile
+	deno run scripts/build_test_vectors.ts < vectors.h > test-vectors.json.gz
 
 # monocypher.c monocypher.h vectors.h &: Makefile
 # 	curl https://monocypher.org/download/$(MONOCYPHER_VERSION_NAME).tar.gz | tar -xzv --strip-components=2 $(MONOCYPHER_VERSION_NAME)/src/monocypher.c $(MONOCYPHER_VERSION_NAME)/src/monocypher.h $(MONOCYPHER_VERSION_NAME)/tests/vectors.h
