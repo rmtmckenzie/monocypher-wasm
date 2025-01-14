@@ -1,15 +1,18 @@
 import { describe, it } from 'https://deno.land/x/deno_mocha@0.3.0/mod.ts';
 import { expect } from 'https://deno.land/x/expect@v0.2.10/mod.ts';
-// import { gunzip } from 'https://deno.land/x/compress@v0.4.3/gzip/mod.ts';
 import * as mc from './mod.ts';
 
 import testVectors from './test-vectors.json' with { type: 'json' };
-//  with { type: "json" };
 
 function asArray(input: string) {
   return Uint8Array.from(
     input?.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16)) ?? [],
   );
+}
+
+function asU8(input: string): number {
+  const buf = asArray(input);
+  return Number(buf[0]);
 }
 
 function asU32(input: string): number {
@@ -34,42 +37,76 @@ function asU64(input: string): bigint {
     BigInt(buf[0]);
 }
 
+function randomBytes(length: number): Uint8Array {
+  const arr = new Uint8Array(length);
+  crypto.getRandomValues(arr);
+  return arr;
+}
+
 describe('Monocypher WASM Port', function () {
   it('argon2', function () {
-    const result = mc.argon2({
-      hashSize: 32,
-      algorithm: 'i',
-      blocks: 8,
-      passes: 3,
-      lanes: 1,
-      password: asArray(
-        '0101010101010101010101010101010101010101010101010101010101010101',
-      ),
-      salt: asArray('02020202020202020202020202020202'),
-      key: asArray('0303030303030303'),
-      ad: asArray('040404040404040404040404'),
-    });
-    expect(result).toEqual(
-      asArray(
-        'afe519be3ab0e92375df221dfb17347080c7000b1be85f9ee39978bf11e7cc3a',
-      ),
-    );
+    const values = testVectors.argon2;
+    const length = values.length;
+    const num = 9;
+    for (let i = 0; i + num <= length; i += num) {
+      const [alg, blocks, iterations, lanes, password, salt, key, ad, out] = values.slice(
+        i,
+        i + num,
+      );
+
+      const algInt = asU8(alg) as 0 | 1 | 2;
+      let algLetter: 'd' | 'i' | 'id';
+      switch (algInt) {
+        case 0: {
+          algLetter = 'd';
+          break;
+        }
+        case 1: {
+          algLetter = 'i';
+          break;
+        }
+        case 2: {
+          algLetter = 'id';
+          break;
+        }
+      }
+      const outBytes = asArray(out);
+      const result = mc.argon2({
+        hashSize: outBytes.length as 32 | 64,
+        algorithm: algLetter,
+        blocks: asU8(blocks),
+        passes: asU8(iterations),
+        lanes: asU8(lanes),
+        password: asArray(password),
+        salt: asArray(salt),
+        key: key.length ? asArray(key) : undefined,
+        ad: ad.length ? asArray(ad) : undefined,
+      });
+      expect(result).toEqual(outBytes);
+    }
   });
 
   it('chacha20djb', function () {
     const values = testVectors.chacha20;
     const length = values.length;
     const num = 5;
-    for (let i = 0; i + num < length; i += num) {
+    for (let i = 0; i + num <= length; i += num) {
       const [key, nonce, plain, ctr, out] = values.slice(i, i + num);
-      const result = mc.chacha20djb({
-        plainTextOrSize: plain.length ? asArray(plain) : 0,
+      const cha = new mc.ChaCha20({
         key: asArray(key),
         nonce: asArray(nonce),
-        ctr: asU64(ctr),
+        alg: 'djb',
+        counter: asU64(ctr),
       });
 
-      expect(result.cipherText).toEqual(asArray(out));
+      let cipher: Uint8Array;
+      if (plain.length) {
+        cipher = cha.encrypt(asArray(plain));
+      } else {
+        cipher = cha.gen(0);
+      }
+
+      expect(cipher).toEqual(asArray(out));
     }
   });
 
@@ -77,16 +114,24 @@ describe('Monocypher WASM Port', function () {
     const values = testVectors.ietf_chacha20;
     const length = values.length;
     const num = 5;
-    for (let i = 0; i + num < length; i += num) {
+    for (let i = 0; i + num <= length; i += num) {
       const [key, nonce, plain, ctr, out] = values.slice(i, i + num);
-      const result = mc.chacha20ietf({
-        plainTextOrSize: plain.length ? asArray(plain) : 0,
+
+      const cha = new mc.ChaCha20({
         key: asArray(key),
         nonce: asArray(nonce),
-        ctr: asU32(ctr),
+        alg: 'ietf',
+        counter: asU32(ctr),
       });
 
-      expect(result.cipherText).toEqual(asArray(out));
+      let cipher: Uint8Array;
+      if (plain.length) {
+        cipher = cha.encrypt(asArray(plain));
+      } else {
+        cipher = cha.gen(0);
+      }
+
+      expect(cipher).toEqual(asArray(out));
     }
   });
 
@@ -94,16 +139,23 @@ describe('Monocypher WASM Port', function () {
     const values = testVectors.xchacha20;
     const length = values.length;
     const num = 5;
-    for (let i = 0; i + num < length; i += num) {
+    for (let i = 0; i + num <= length; i += num) {
       const [key, nonce, plain, ctr, out] = values.slice(i, i + num);
-      const result = mc.chacha20x({
-        plainTextOrSize: plain.length ? asArray(plain) : 0,
+      const cha = new mc.ChaCha20({
         key: asArray(key),
         nonce: asArray(nonce),
-        ctr: asU64(ctr),
+        alg: 'x',
+        counter: asU64(ctr),
       });
 
-      expect(result.cipherText).toEqual(asArray(out));
+      let cipher: Uint8Array;
+      if (plain.length) {
+        cipher = cha.encrypt(asArray(plain));
+      } else {
+        cipher = cha.gen(0);
+      }
+
+      expect(cipher).toEqual(asArray(out));
     }
   });
 
@@ -113,7 +165,7 @@ describe('Monocypher WASM Port', function () {
     const values = testVectors.hchacha20;
     const length = values.length;
     const num = 3;
-    for (let i = 0; i + num < length; i += num) {
+    for (let i = 0; i + num <= length; i += num) {
       const [key, nonce, out] = values.slice(i, i + num);
       const result = mc.chacha20hash({
         key: asArray(key),
@@ -128,7 +180,7 @@ describe('Monocypher WASM Port', function () {
     const values = testVectors.poly1305;
     const length = values.length;
     const num = 3;
-    for (let i = 0; i + num < length; i += num) {
+    for (let i = 0; i + num <= length; i += num) {
       const [key, msg, out] = values.slice(i, i + num);
       const result = mc.poly1305({
         message: asArray(msg),
@@ -139,92 +191,95 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it('aead', function () {
-    mc.blake2btest();
-    expect(false).toBe(true);
-    // const values = testVectors.aead_ietf;
-    // const length = values.length;
-    // const num = 0;
-    // for (let i = 0; i + num < length; i += num) {
-    //   // const [];
-    //   // mc.
-    // }
+  //TODO: poly incremental
+
+  it('elligator', function () {
+    const values = testVectors.elligator_dir;
+    const length = values.length;
+    const num = 2;
+    for (let i = 0; i + num <= length; i += num) {
+      const [input, output] = values.slice(i, i + num);
+      const result = mc.elligatorMap(asArray(input));
+      expect(result).toEqual(asArray(output));
+    }
   });
 
-  // it('aead_ietf', function () {
-  //   const reader = new VectorReader(vectors.aead_ietf);
-  //   while (!reader.done) {
-  //     const key = reader.next();
-  //     const nonce = reader.next();
-  //     const ad = reader.next();
-  //     const text = reader.next();
-  //     const out = reader.next();
-  //     expect(mc.crypto_lock_aead(key, nonce, ad, text)).toEqual(out);
-  //   }
-  // });
+  it('elligatorRev', function () {
+    const values = testVectors.elligator_inv;
+    const length = values.length;
+    const num = 4;
+    for (let i = 0; i + num <= length; i += num) {
+      const [curve, tweak, outResult, out] = values.slice(i, i + num);
+      const result = mc.elligatorRev({
+        curve: asArray(curve),
+        tweak: asU8(tweak),
+      });
+      if (asU8(outResult) == 0) {
+        expect(result).toEqual(asArray(out));
+      } else {
+        expect(result).toBeNull();
+      }
+    }
+  });
 
-  // it('blake2b', function () {
-  //   const reader = new VectorReader(vectors.blake2b);
-  //   while (!reader.done) {
-  //     const msg = reader.next();
-  //     const key = reader.next();
-  //     const out = reader.next();
-  //     expect(mc.crypto_blake2b_general(out.byteLength, key, msg)).toEqual(out);
-  //   }
-  // });
+  it('elligatorKeyPair', function () {
+    for (let i = 0; i < 32; i++) {
+      const seed = randomBytes(32);
+      const sk2 = randomBytes(32);
+      const { hidden: r, secretKey: sk1 } = mc.elligatorKeyPair(seed);
+      const pkr = mc.elligatorMap(r);
+      const pk1 = mc.x25519PublicKey(sk1);
+      const e1 = mc.x25519({ yourSecretKey: sk2, theirPublicKey: pk1 });
+      const e2 = mc.x25519({ yourSecretKey: sk2, theirPublicKey: pkr });
+      expect(e2).toEqual(e1);
+    }
+  });
 
-  // it('argon2i', function () {
-  //   const reader = new VectorReader(vectors.argon2i);
-  //   while (!reader.done) {
-  //     const nb_blocks = read6ByteInt(reader.next());
-  //     const nb_iterations = read6ByteInt(reader.next());
-  //     const password = reader.next();
-  //     const salt = reader.next();
-  //     const key = reader.next();
-  //     const ad = reader.next();
-  //     const out = reader.next();
-  //     expect(
-  //       mc.crypto_argon2i_general(
-  //         out.byteLength as 32 | 64,
-  //         nb_blocks,
-  //         nb_iterations,
-  //         password,
-  //         salt,
-  //         key,
-  //         ad,
-  //       ),
-  //     ).toEqual(out);
-  //   }
-  // });
+  it('eddsa', function () {
+    const values = testVectors.edDSA;
+    const length = values.length;
+    const num = 4;
+    for (let i = 0; i + num <= length; i += num) {
+      const [sk, pk, message, out] = values.slice(i, i + num);
+      const ska = asArray(sk);
+      const pka = asArray(pk);
+      const fatSk = new Uint8Array(ska.length + pka.length);
+      fatSk.set(ska);
+      fatSk.set(pka, ska.length);
+      const sig = mc.eddsaSign({ secretKey: fatSk, message: asArray(message) });
+      const checkResult = mc.eddsaCheck({
+        signature: sig,
+        message: asArray(message),
+        publicKey: asArray(pk),
+      });
+      expect(checkResult).toBeTruthy();
+      expect(sig).toEqual(asArray(out));
+    }
+  });
 
-  // it('x25519', function () {
-  //   const reader = new VectorReader(vectors.x25519);
-  //   while (!reader.done) {
-  //     const scalar = reader.next();
-  //     const point = reader.next();
-  //     const out = reader.next();
-  //     expect(mc.crypto_x25519(scalar, point)).toEqual(out);
-  //   }
-  // });
+  it('eddsaKeyPair', function () {
+    const values = testVectors.edDSA_pk;
+    const length = values.length;
+    const num = 2;
+    for (let i = 0; i + num <= length; i += num) {
+      const [seed, out] = values;
+      const { secretKey, publicKey } = mc.eddsaKeyPair(asArray(seed));
+      expect(publicKey).toEqual(asArray(out));
+      expect(secretKey.slice(0, 32)).toEqual(asArray(seed));
+      expect(secretKey.slice(32)).toEqual(publicKey);
+    }
+  });
 
-  // it('x25519_pk', function () {
-  //   const reader = new VectorReader(vectors.x25519_pk);
-  //   while (!reader.done) {
-  //     const in_ = reader.next();
-  //     const out = reader.next();
-  //     expect(mc.crypto_x25519_public_key(in_)).toEqual(out);
-  //   }
-  // });
-
-  // it('key_exchange', function () {
-  //   const reader = new VectorReader(vectors.key_exchange);
-  //   while (!reader.done) {
-  //     const secret_key = reader.next();
-  //     const public_key = reader.next();
-  //     const out = reader.next();
-  //     expect(mc.crypto_key_exchange(secret_key, public_key)).toEqual(out);
-  //   }
-  // });
+  it('ed25519', function () {
+    const values = testVectors.ed_25519;
+    const length = values.length;
+    const num = 2;
+    for (let i = 0; i + num <= length; i += num) {
+      const [input, out] = values;
+      const ret = mc.eddsaSign(asArray(input));
+      expect(ret).toEqual(asArray(out));
+    }
+  });
 
   // it('edDSA', function () {
   //   const reader = new VectorReader(vectors.edDSA);

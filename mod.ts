@@ -585,6 +585,7 @@ export function argon2({
     if (blocks < 8) {
       throw new Error('crypto_argon2: config.blocks must be at least 8');
     }
+
     const workArea = ctx.alloc(blocks * 1024);
 
     wasm.crypto_argon2(
@@ -600,7 +601,7 @@ export function argon2({
   });
 }
 
-export function x25519PublicKey({ secretKey }: { secretKey: InputBuffer }) {
+export function x25519PublicKey(secretKey: InputBuffer) {
   return u8AllocCtx((ctx) => {
     const pubKey = ctx.alloc(KEY_BYTES);
     const secKeyOffset = ctx.write(secretKey, { wipe: true });
@@ -675,24 +676,22 @@ export function x25519Dirty(type: 'small' | 'fast', secretKey: InputBuffer) {
   });
 }
 
-export function eddsaKeyPair(): {
+export function eddsaKeyPair(seed: Uint8Array): {
   secretKey: Uint8Array;
   publicKey: Uint8Array;
-  seed: Uint8Array;
 } {
   return allocCtx((ctx) => {
     const secretKey = ctx.alloc(KEY_BYTES + KEY_BYTES);
     const publicKey = ctx.alloc(KEY_BYTES);
-    const seed = ctx.alloc(KEY_BYTES);
+    const seedOffset = ctx.write(seed);
     wasm.crypto_eddsa_key_pair(
       secretKey.byteOffset,
       publicKey.byteOffset,
-      seed.byteOffset,
+      seedOffset,
     );
     return {
       secretKey: Uint8Array.from(secretKey),
       publicKey: Uint8Array.from(publicKey),
-      seed: Uint8Array.from(seed),
     };
   });
 }
@@ -742,7 +741,7 @@ export function eddsaCheck({
   });
 }
 
-export function eddsaToX25519({ eddsa }: { eddsa: InputBuffer }) {
+export function eddsaToX25519(eddsa: InputBuffer) {
   return u8AllocCtx((ctx) => {
     const eddsaOffset = ctx.write(eddsa);
     const x25519 = ctx.alloc(KEY_BYTES);
@@ -837,154 +836,173 @@ export function chacha20hash({
   });
 }
 
-export function chacha20djb({
-  plainTextOrSize,
-  key,
-  nonce,
-  ctr,
-}: {
-  plainTextOrSize: InputBuffer | number;
-  key: InputBuffer;
-  nonce: InputBuffer;
-  ctr: bigint;
-}): { cipherText: Uint8Array; ctr: bigint } {
-  return allocCtx((ctx) => {
-    if (typeof plainTextOrSize == 'number') {
-      const keyOffset = ctx.write(key);
-      const nonceOffset = ctx.write(nonce);
-      const cipherText = ctx.alloc(plainTextOrSize);
-      const ret = wasm.crypto_chacha20_djb(
-        cipherText.byteOffset,
-        null,
-        plainTextOrSize,
-        keyOffset,
-        nonceOffset,
-        ctr,
-      );
-      return {
-        ctr: ret,
-        cipherText: Uint8Array.from(cipherText),
-      };
-    } else {
-      const plainText = plainTextOrSize;
-      const plainTextOffset = ctx.write(plainText);
-      const keyOffset = ctx.write(key);
-      const nonceOffset = ctx.write(nonce);
-      const cipherText = ctx.alloc(plainText.length);
-      const ret = wasm.crypto_chacha20_djb(
-        cipherText.byteOffset,
-        plainTextOffset,
-        plainText.length,
-        keyOffset,
-        nonceOffset,
-        ctr,
-      );
-      return {
-        ctr: ret,
-        cipherText: Uint8Array.from(cipherText),
-      };
-    }
-  });
-}
+export class ChaCha20 {
+  private counter: bigint | number;
+  private key: InputBuffer;
+  private nonce: InputBuffer;
+  private alg: 'x' | 'djb' | 'ietf';
 
-export function chacha20ietf({
-  plainTextOrSize,
-  key,
-  nonce,
-  ctr,
-}: {
-  plainTextOrSize: InputBuffer | number;
-  key: InputBuffer;
-  nonce: InputBuffer;
-  ctr: number;
-}): { cipherText: Uint8Array; ctr: number } {
-  return allocCtx((ctx) => {
-    if (typeof plainTextOrSize == 'number') {
-      const keyOffset = ctx.write(key);
-      const nonceOffset = ctx.write(nonce);
-      const cipherText = ctx.alloc(plainTextOrSize);
-      const ret = wasm.crypto_chacha20_ietf(
-        cipherText.byteOffset,
-        null,
-        plainTextOrSize,
-        keyOffset,
-        nonceOffset,
-        ctr,
-      );
-      return {
-        ctr: ret,
-        cipherText: Uint8Array.from(cipherText),
-      };
-    } else {
-      const plainText = plainTextOrSize;
-      const plainTextOffset = ctx.write(plainText);
-      const keyOffset = ctx.write(key);
-      const nonceOffset = ctx.write(nonce);
-      const cipherText = ctx.alloc(plainText.length);
-      const ret = wasm.crypto_chacha20_ietf(
-        cipherText.byteOffset,
-        plainTextOffset,
-        plainText.length,
-        keyOffset,
-        nonceOffset,
-        ctr,
-      );
-      return {
-        ctr: ret,
-        cipherText: Uint8Array.from(cipherText),
-      };
-    }
+  constructor({
+    key,
+    nonce,
+  }: {
+    key: InputBuffer;
+    nonce: InputBuffer;
   });
-}
+  constructor({
+    key,
+    nonce,
+    counter,
+  }: {
+    key: InputBuffer;
+    nonce: InputBuffer;
+    counter: bigint;
+  });
+  constructor({
+    key,
+    nonce,
+    alg,
+  }: {
+    key: InputBuffer;
+    nonce: InputBuffer;
+    alg: 'x' | 'djb' | 'ietf';
+  });
+  constructor({
+    key,
+    nonce,
+    alg,
+    counter,
+  }: {
+    key: InputBuffer;
+    nonce: InputBuffer;
+    counter: bigint;
+    alg: 'x' | 'djb';
+  });
+  constructor({
+    key,
+    nonce,
+    alg,
+    counter,
+  }: {
+    key: InputBuffer;
+    nonce: InputBuffer;
+    counter: number;
+    alg: 'ietf';
+  });
+  constructor({
+    key,
+    nonce,
+    counter,
+    alg = 'x',
+  }: {
+    key: InputBuffer;
+    nonce: InputBuffer;
+    alg?: 'x' | 'djb' | 'ietf';
+    counter?: bigint | number | undefined;
+  }) {
+    this.alg = alg;
+    this.key = key;
+    this.nonce = nonce;
+    if (counter === undefined) {
+      if (alg == 'ietf') {
+        this.counter = 0;
+      } else {
+        this.counter = 0n;
+      }
+    } else {
+      this.counter = counter;
+    }
+  }
 
-export function chacha20x({
-  plainTextOrSize,
-  key,
-  nonce,
-  ctr,
-}: {
-  plainTextOrSize: InputBuffer | number;
-  key: InputBuffer;
-  nonce: InputBuffer;
-  ctr: bigint;
-}): { cipherText: Uint8Array; ctr: bigint } {
-  return allocCtx((ctx) => {
-    if (typeof plainTextOrSize == 'number') {
-      const keyOffset = ctx.write(key);
-      const nonceOffset = ctx.write(nonce);
-      const cipherText = ctx.alloc(plainTextOrSize);
-      const ret = wasm.crypto_chacha20_x(
-        cipherText.byteOffset,
-        null,
-        plainTextOrSize,
-        keyOffset,
-        nonceOffset,
-        ctr,
-      );
-      return {
-        ctr: ret,
-        cipherText: Uint8Array.from(cipherText),
-      };
-    } else {
-      const plainText = plainTextOrSize;
+  encrypt(plainText: InputBuffer) {
+    return u8AllocCtx((ctx) => {
       const plainTextOffset = ctx.write(plainText);
-      const keyOffset = ctx.write(key);
-      const nonceOffset = ctx.write(nonce);
-      const cipherText = ctx.alloc(plainText.length);
-      const ret = wasm.crypto_chacha20_x(
-        cipherText.byteOffset,
-        plainTextOffset,
-        plainText.length,
-        keyOffset,
-        nonceOffset,
-        ctr,
-      );
-      return {
-        ctr: ret,
-        cipherText: Uint8Array.from(cipherText),
-      };
-    }
-  });
+      const keyOffset = ctx.write(this.key, { wipe: true });
+      const nonceOffset = ctx.write(this.nonce, { wipe: true });
+      const cipherText = ctx.alloc(plainText.length, { wipe: true });
+      switch (this.alg) {
+        case 'x': {
+          this.counter = wasm.crypto_chacha20_x(
+            cipherText.byteOffset,
+            plainTextOffset,
+            plainText.length,
+            keyOffset,
+            nonceOffset,
+            this.counter as bigint,
+          );
+          break;
+        }
+        case 'djb': {
+          this.counter = wasm.crypto_chacha20_djb(
+            cipherText.byteOffset,
+            plainTextOffset,
+            plainText.length,
+            keyOffset,
+            nonceOffset,
+            this.counter as bigint,
+          );
+          break;
+        }
+        case 'ietf': {
+          this.counter = wasm.crypto_chacha20_ietf(
+            cipherText.byteOffset,
+            plainTextOffset,
+            plainText.length,
+            keyOffset,
+            nonceOffset,
+            this.counter as number,
+          );
+          break;
+        }
+      }
+      return cipherText;
+    });
+  }
+
+  gen(size: number) {
+    return u8AllocCtx((ctx) => {
+      const keyOffset = ctx.write(this.key, { wipe: true });
+      const nonceOffset = ctx.write(this.nonce, { wipe: true });
+      const generated = ctx.alloc(size);
+
+      switch (this.alg) {
+        case 'x': {
+          this.counter = wasm.crypto_chacha20_x(
+            generated.byteOffset,
+            null,
+            size,
+            keyOffset,
+            nonceOffset,
+            this.counter as bigint,
+          );
+          break;
+        }
+        case 'djb': {
+          this.counter = wasm.crypto_chacha20_djb(
+            generated.byteOffset,
+            null,
+            size,
+            keyOffset,
+            nonceOffset,
+            this.counter as bigint,
+          );
+          break;
+        }
+        case 'ietf': {
+          this.counter = wasm.crypto_chacha20_ietf(
+            generated.byteOffset,
+            null,
+            size,
+            keyOffset,
+            nonceOffset,
+            this.counter as number,
+          );
+          break;
+        }
+      }
+      return generated;
+    });
+  }
 }
 
 export function poly1305({
@@ -1056,438 +1074,33 @@ export function elligatorMap(hidden: InputBuffer) {
 }
 
 export function elligatorRev({
-  hidden,
   curve,
   tweak,
 }: {
-  hidden: InputBuffer;
   curve: InputBuffer;
   tweak: number;
-}): number {
+}): Uint8Array | null {
   return allocCtx((ctx) => {
-    const hiddenOffset = ctx.write(hidden);
-    const curveOffset = ctx.write(curve);
-    return wasm.crypto_elligator_rev(hiddenOffset, curveOffset, tweak);
+    const hidden = ctx.alloc(KEY_BYTES);
+    const curveOffset = ctx.write(curve, { wipe: true });
+    const ret = wasm.crypto_elligator_rev(hidden.byteOffset, curveOffset, tweak);
+    return ret == 0 ? Uint8Array.from(hidden) : null;
   });
 }
 
-export function elligatorKeyPair() {
+export function elligatorKeyPair(seed: Uint8Array) {
   return allocCtx((ctx) => {
     const hidden = ctx.alloc(KEY_BYTES);
     const secretKey = ctx.alloc(KEY_BYTES);
-    const seed = ctx.alloc(KEY_BYTES);
+    const seedOffset = ctx.write(seed);
     wasm.crypto_elligator_key_pair(
       hidden.byteOffset,
       secretKey.byteOffset,
-      seed.byteOffset,
+      seedOffset,
     );
     return {
       hidden: Uint8Array.from(hidden),
       secretKey: Uint8Array.from(secretKey),
-      seed: Uint8Array.from(seed),
     };
   });
 }
-
-// export function crypto_x25519(
-//   your_secret_key: InputBuffer,
-//   their_public_key: InputBuffer,
-// ): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 3);
-//   if (your_secret_key) write(your_secret_key, ptr + KEY_BYTES);
-//   if (their_public_key) write(their_public_key, ptr + KEY_BYTES * 2);
-//   wasm.crypto_x25519(
-//     ptr,
-//     your_secret_key ? ptr + KEY_BYTES : 0,
-//     their_public_key ? ptr + KEY_BYTES * 2 : 0,
-//   );
-//   return read(ptr, KEY_BYTES);
-// }
-
-// export function crypto_x25519_public_key(secret_key: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (secret_key) write(secret_key, ptr + KEY_BYTES);
-//   wasm.crypto_x25519_public_key(ptr, secret_key ? ptr + KEY_BYTES : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, KEY_BYTES);
-// }
-
-// export function crypto_blake2b(message: InputBuffer): Uint8Array {
-//   const messageLength = message ? message.length : 0;
-//   const ptr = alloc(HASH_BYTES + messageLength);
-//   if (message) write(message, ptr + HASH_BYTES);
-//   wasm.crypto_blake2b(ptr, message ? ptr + HASH_BYTES : 0, messageLength);
-//   return read(ptr, HASH_BYTES);
-// }
-// export function crypto_blake2b_general(
-//   hash_size: number,
-//   key: InputBuffer,
-//   message: InputBuffer,
-// ): Uint8Array {
-//   const keyLength = key ? key.length : 0;
-//   const messageLength = message ? message.length : 0;
-//   const ptr = alloc(hash_size + keyLength + messageLength);
-//   if (key) write(key, ptr + hash_size);
-//   if (message) write(message, ptr + hash_size + keyLength);
-//   wasm.crypto_blake2b_general(
-//     ptr,
-//     hash_size,
-//     key ? ptr + hash_size : 0,
-//     keyLength,
-//     message ? ptr + hash_size + keyLength : 0,
-//     messageLength,
-//   );
-//   return read(ptr, hash_size);
-// }
-
-// export function crypto_chacha20(
-//   plain_text: InputBuffer,
-//   key: InputBuffer,
-//   nonce: InputBuffer,
-// ): Uint8Array {
-//   const textLength = plain_text ? plain_text.length : 0;
-//   const ptr = alloc(textLength + KEY_BYTES + CHACHA20_NONCE_BYTES);
-//   if (plain_text) write(plain_text, ptr);
-//   if (key) write(key, ptr + textLength);
-//   if (nonce) write(nonce, ptr + textLength + KEY_BYTES);
-//   wasm.crypto_chacha20(
-//     ptr,
-//     ptr,
-//     textLength,
-//     key ? ptr + textLength : 0,
-//     nonce ? ptr + textLength + KEY_BYTES : 0,
-//   );
-//   wasm.crypto_wipe(ptr + textLength, KEY_BYTES);
-//   return read(ptr, textLength);
-// }
-// export function crypto_xchacha20(
-//   plain_text: InputBuffer,
-//   key: InputBuffer,
-//   nonce: InputBuffer,
-// ): Uint8Array {
-//   const textLength = plain_text ? plain_text.length : 0;
-//   const ptr = alloc(textLength + KEY_BYTES + NONCE_BYTES);
-//   if (plain_text) write(plain_text, ptr);
-//   if (key) write(key, ptr + textLength);
-//   if (nonce) write(nonce, ptr + textLength + KEY_BYTES);
-//   wasm.crypto_xchacha20(
-//     ptr,
-//     ptr,
-//     textLength,
-//     key ? ptr + textLength : 0,
-//     nonce ? ptr + textLength + KEY_BYTES : 0,
-//   );
-//   wasm.crypto_wipe(ptr + textLength, KEY_BYTES);
-//   return read(ptr, textLength);
-// }
-
-// export function crypto_curve_to_hidden(curve: InputBuffer, tweak: number): Uint8Array | null {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (curve) write(curve, ptr + KEY_BYTES);
-//   const success = wasm.crypto_curve_to_hidden(ptr, curve ? ptr + KEY_BYTES : 0, tweak) === 0;
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return success ? read(ptr, KEY_BYTES) : null;
-// }
-// export function crypto_hidden_to_curve(hidden: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (hidden) write(hidden, ptr + KEY_BYTES);
-//   wasm.crypto_hidden_to_curve(ptr, hidden ? ptr + KEY_BYTES : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, KEY_BYTES);
-// }
-// export function crypto_hidden_key_pair(
-//   seed: InputBuffer,
-// ): { hidden: Uint8Array; secret_key: Uint8Array } {
-//   const ptr = alloc(KEY_BYTES * 3);
-//   if (seed) write(seed, ptr + KEY_BYTES * 2);
-//   wasm.crypto_hidden_key_pair(ptr, ptr + KEY_BYTES, seed ? ptr + KEY_BYTES * 2 : 0);
-//   const hidden = read(ptr, KEY_BYTES);
-//   const secret_key = read(ptr + KEY_BYTES, KEY_BYTES);
-//   wasm.crypto_wipe(ptr, KEY_BYTES * 3);
-//   return { hidden, secret_key };
-// }
-
-// export function crypto_from_eddsa_private(eddsa: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (eddsa) write(eddsa, ptr + KEY_BYTES);
-//   wasm.crypto_from_eddsa_private(ptr, eddsa ? ptr + KEY_BYTES : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, KEY_BYTES);
-// }
-// export function crypto_from_eddsa_public(eddsa: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (eddsa) write(eddsa, ptr + KEY_BYTES);
-//   wasm.crypto_from_eddsa_public(ptr, eddsa ? ptr + KEY_BYTES : 0);
-//   return read(ptr, KEY_BYTES);
-// }
-
-// export function crypto_hchacha20(key: InputBuffer, in_: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2 + 16);
-//   if (key) write(key, ptr + KEY_BYTES);
-//   if (in_) write(in_, ptr + KEY_BYTES * 2);
-//   wasm.crypto_hchacha20(ptr, key ? ptr + KEY_BYTES : 0, in_ ? ptr + KEY_BYTES * 2 : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES + 16);
-//   return read(ptr, KEY_BYTES);
-// }
-
-// export function crypto_ietf_chacha20(
-//   plain_text: InputBuffer,
-//   key: InputBuffer,
-//   nonce: InputBuffer,
-// ): Uint8Array {
-//   const textLength = plain_text ? plain_text.length : 0;
-//   const ptr = alloc(textLength + KEY_BYTES + 12);
-//   if (plain_text) write(plain_text, ptr);
-//   if (key) write(key, ptr + textLength);
-//   if (nonce) write(nonce, ptr + textLength + KEY_BYTES);
-//   wasm.crypto_ietf_chacha20(
-//     ptr,
-//     ptr,
-//     textLength,
-//     key ? ptr + textLength : 0,
-//     nonce ? ptr + textLength + KEY_BYTES : 0,
-//   );
-//   wasm.crypto_wipe(ptr + textLength, KEY_BYTES);
-//   return read(ptr, textLength);
-// }
-
-// export function crypto_key_exchange(
-//   your_secret_key: InputBuffer,
-//   their_public_key: InputBuffer,
-// ): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 3);
-//   if (your_secret_key) write(your_secret_key, ptr + KEY_BYTES);
-//   if (their_public_key) write(their_public_key, ptr + KEY_BYTES * 2);
-//   wasm.crypto_key_exchange(
-//     ptr,
-//     your_secret_key ? ptr + KEY_BYTES : 0,
-//     their_public_key ? ptr + KEY_BYTES * 2 : 0,
-//   );
-//   return read(ptr, KEY_BYTES);
-// }
-// export function crypto_key_exchange_public_key(your_secret_key: InputBuffer): Uint8Array {
-//   return crypto_x25519_public_key(your_secret_key);
-// }
-
-// export function crypto_lock(
-//   key: InputBuffer,
-//   nonce: InputBuffer,
-//   plain_text: InputBuffer,
-// ): Uint8Array {
-//   const textLength = plain_text ? plain_text.length : 0;
-//   const ptr = alloc(MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES);
-//   if (plain_text) write(plain_text, ptr + MAC_BYTES);
-//   if (key) write(key, ptr + MAC_BYTES + textLength);
-//   if (nonce) write(nonce, ptr + MAC_BYTES + textLength + KEY_BYTES);
-//   wasm.crypto_lock(
-//     ptr,
-//     ptr + MAC_BYTES,
-//     key ? ptr + MAC_BYTES + textLength : 0,
-//     nonce ? ptr + MAC_BYTES + textLength + KEY_BYTES : 0,
-//     ptr + MAC_BYTES,
-//     textLength,
-//   );
-//   wasm.crypto_wipe(ptr + MAC_BYTES + textLength, KEY_BYTES);
-//   return read(ptr, MAC_BYTES + textLength);
-// }
-// export function crypto_unlock(
-//   key: InputBuffer,
-//   nonce: InputBuffer,
-//   cipher_text: InputBuffer,
-// ): Uint8Array | null {
-//   if (!cipher_text || cipher_text.length < MAC_BYTES) return null;
-//   const textLength = cipher_text.length - MAC_BYTES;
-//   const ptr = alloc(MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES);
-//   write(cipher_text, ptr);
-//   if (key) write(key, ptr + MAC_BYTES + textLength);
-//   if (nonce) write(nonce, ptr + MAC_BYTES + textLength + KEY_BYTES);
-//   const success = wasm.crypto_unlock(
-//     ptr + MAC_BYTES,
-//     key ? ptr + MAC_BYTES + textLength : 0,
-//     nonce ? ptr + MAC_BYTES + textLength + KEY_BYTES : 0,
-//     ptr,
-//     ptr + MAC_BYTES,
-//     textLength,
-//   ) === 0;
-//   wasm.crypto_wipe(ptr + MAC_BYTES + textLength, KEY_BYTES);
-//   return success ? read(ptr + MAC_BYTES, textLength) : null;
-// }
-// export function crypto_lock_aead(
-//   key: InputBuffer,
-//   nonce: InputBuffer,
-//   ad: InputBuffer,
-//   plain_text: InputBuffer,
-// ): Uint8Array {
-//   const textLength = plain_text ? plain_text.length : 0;
-//   const adLength = ad ? ad.length : 0;
-//   const ptr = alloc(MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES + adLength);
-//   if (plain_text) write(plain_text, ptr + MAC_BYTES);
-//   if (key) write(key, ptr + MAC_BYTES + textLength);
-//   if (nonce) write(nonce, ptr + MAC_BYTES + textLength + KEY_BYTES);
-//   if (ad) write(ad, ptr + MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES);
-//   wasm.crypto_lock_aead(
-//     ptr,
-//     ptr + MAC_BYTES,
-//     key ? ptr + MAC_BYTES + textLength : 0,
-//     nonce ? ptr + MAC_BYTES + textLength + KEY_BYTES : 0,
-//     ad ? ptr + MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES : 0,
-//     adLength,
-//     ptr + MAC_BYTES,
-//     textLength,
-//   );
-//   wasm.crypto_wipe(ptr + MAC_BYTES + textLength, KEY_BYTES);
-//   return read(ptr, MAC_BYTES + textLength);
-// }
-// export function crypto_unlock_aead(
-//   key: InputBuffer,
-//   nonce: InputBuffer,
-//   ad: InputBuffer,
-//   cipher_text: InputBuffer,
-// ): Uint8Array | null {
-//   if (!cipher_text || cipher_text.length < MAC_BYTES) return null;
-//   const textLength = cipher_text.length - MAC_BYTES;
-//   const adLength = ad ? ad.length : 0;
-//   const ptr = alloc(MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES + adLength);
-//   write(cipher_text ?? [], ptr);
-//   if (key) write(key, ptr + MAC_BYTES + textLength);
-//   if (nonce) write(nonce, ptr + MAC_BYTES + textLength + KEY_BYTES);
-//   if (ad) write(ad, ptr + MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES);
-//   const success = wasm.crypto_unlock_aead(
-//     ptr + MAC_BYTES,
-//     key ? ptr + MAC_BYTES + textLength : 0,
-//     nonce ? ptr + MAC_BYTES + textLength + KEY_BYTES : 0,
-//     ptr,
-//     ad ? ptr + MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES : 0,
-//     adLength,
-//     ptr + MAC_BYTES,
-//     textLength,
-//   ) === 0;
-//   wasm.crypto_wipe(ptr + MAC_BYTES + textLength, KEY_BYTES);
-//   return success ? read(ptr + MAC_BYTES, textLength) : null;
-// }
-
-// export function crypto_poly1305(message: InputBuffer, key: InputBuffer): Uint8Array {
-//   const messageLength = message ? message.length : 0;
-//   const ptr = alloc(MAC_BYTES + KEY_BYTES + messageLength);
-//   write(key ?? [], ptr + MAC_BYTES);
-//   if (message) write(message, ptr + MAC_BYTES + KEY_BYTES);
-//   wasm.crypto_poly1305(ptr, ptr + MAC_BYTES + KEY_BYTES, messageLength, ptr + MAC_BYTES);
-//   return read(ptr, MAC_BYTES);
-// }
-
-// export function crypto_sign_public_key(secret_key: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (secret_key) write(secret_key, ptr + KEY_BYTES);
-//   wasm.crypto_sign_public_key(ptr, secret_key ? ptr + KEY_BYTES : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, secret_key ? KEY_BYTES : 0);
-// }
-// export function crypto_sign(
-//   secret_key: InputBuffer,
-//   public_key: InputBuffer,
-//   message: InputBuffer,
-// ): Uint8Array {
-//   const messageLength = message ? message.length : 0;
-//   const ptr = alloc(HASH_BYTES + KEY_BYTES + KEY_BYTES + messageLength);
-//   if (secret_key) write(secret_key, ptr + HASH_BYTES);
-//   if (public_key) write(public_key, ptr + HASH_BYTES + KEY_BYTES);
-//   if (message) write(message, ptr + HASH_BYTES + KEY_BYTES * 2);
-//   wasm.crypto_sign(
-//     ptr,
-//     secret_key ? ptr + HASH_BYTES : 0,
-//     public_key ? ptr + HASH_BYTES + KEY_BYTES : 0,
-//     message ? ptr + HASH_BYTES + KEY_BYTES * 2 : 0,
-//     messageLength,
-//   );
-//   wasm.crypto_wipe(ptr + HASH_BYTES + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, HASH_BYTES);
-// }
-// export function crypto_check(
-//   signature: InputBuffer,
-//   public_key: InputBuffer,
-//   message: InputBuffer,
-// ): boolean {
-//   const messageLength = message ? message.length : 0;
-//   const ptr = alloc(HASH_BYTES + KEY_BYTES + messageLength);
-//   if (signature) write(signature, ptr, HASH_BYTES);
-//   if (public_key) write(public_key, ptr + HASH_BYTES, KEY_BYTES);
-//   if (message) write(message, ptr + HASH_BYTES + KEY_BYTES, messageLength);
-//   return wasm.crypto_check(
-//     signature ? ptr : 0,
-//     public_key ? ptr + HASH_BYTES : 0,
-//     message ? ptr + HASH_BYTES + KEY_BYTES : 0,
-//     messageLength,
-//   ) === 0;
-// }
-
-// export function crypto_verify16(a: InputBuffer, b: InputBuffer): boolean {
-//   const ptr = alloc(32);
-//   write(a ?? [], ptr);
-//   write(b ?? [], ptr + 16);
-//   return wasm.crypto_verify16(ptr, ptr + 16) === 0;
-// }
-// export function crypto_verify32(a: InputBuffer, b: InputBuffer): boolean {
-//   const ptr = alloc(64);
-//   write(a ?? [], ptr);
-//   write(b ?? [], ptr + 32);
-//   return wasm.crypto_verify32(ptr, ptr + 32) === 0;
-// }
-// export function crypto_verify64(a: InputBuffer, b: InputBuffer): boolean {
-//   const ptr = alloc(128);
-//   write(a ?? [], ptr);
-//   write(b ?? [], ptr + 64);
-//   return wasm.crypto_verify64(ptr, ptr + 64) === 0;
-// }
-
-// export function crypto_x25519(
-//   your_secret_key: InputBuffer,
-//   their_public_key: InputBuffer,
-// ): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 3);
-//   if (your_secret_key) write(your_secret_key, ptr + KEY_BYTES);
-//   if (their_public_key) write(their_public_key, ptr + KEY_BYTES * 2);
-//   wasm.crypto_x25519(
-//     ptr,
-//     your_secret_key ? ptr + KEY_BYTES : 0,
-//     their_public_key ? ptr + KEY_BYTES * 2 : 0,
-//   );
-//   return read(ptr, KEY_BYTES);
-// }
-// export function crypto_x25519_public_key(secret_key: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (secret_key) write(secret_key, ptr + KEY_BYTES);
-//   wasm.crypto_x25519_public_key(ptr, secret_key ? ptr + KEY_BYTES : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, KEY_BYTES);
-// }
-
-// export function crypto_x25519_dirty_fast(secret_key: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (secret_key) write(secret_key, ptr + KEY_BYTES);
-//   wasm.crypto_x25519_dirty_fast(ptr, secret_key ? ptr + KEY_BYTES : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, KEY_BYTES);
-// }
-// export function crypto_x25519_dirty_small(secret_key: InputBuffer): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 2);
-//   if (secret_key) write(secret_key, ptr + KEY_BYTES);
-//   wasm.crypto_x25519_dirty_small(ptr, secret_key ? ptr + KEY_BYTES : 0);
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, KEY_BYTES);
-// }
-
-// export function crypto_x25519_inverse(
-//   private_key: InputBuffer,
-//   curve_point: InputBuffer,
-// ): Uint8Array {
-//   const ptr = alloc(KEY_BYTES * 3);
-//   if (private_key) write(private_key, ptr + KEY_BYTES);
-//   if (curve_point) write(curve_point, ptr + KEY_BYTES * 2);
-//   wasm.crypto_x25519_inverse(
-//     ptr,
-//     private_key ? ptr + KEY_BYTES : 0,
-//     curve_point ? ptr + KEY_BYTES * 2 : 0,
-//   );
-//   wasm.crypto_wipe(ptr + KEY_BYTES, KEY_BYTES);
-//   return read(ptr, KEY_BYTES);
-// }
